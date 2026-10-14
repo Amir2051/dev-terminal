@@ -45,3 +45,21 @@ def test_local_mode_guard_rejects_saas_execution(monkeypatch):
         main._require_local_mode()
 
     assert exc.value.status_code == 501
+
+
+def test_saas_responses_include_security_headers_and_are_not_cached(monkeypatch):
+    monkeypatch.setattr(main, "APP_MODE", "saas")
+    monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
+    monkeypatch.setattr(main, "SUPABASE_URL", "https://project.example.supabase.co")
+    client = TestClient(main.app, base_url="https://testserver")
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+    assert response.headers["cache-control"] == "no-store"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert "https://project.example.supabase.co" in response.headers["content-security-policy"]
