@@ -1,22 +1,28 @@
 # dev-terminal
 
-A self-hosted, **localhost-only** developer dashboard for Linux. It combines a FastAPI backend, local Git repository status, server-side GitHub repository listing, an installable PWA, and an embedded [ttyd](https://github.com/tsl0922/ttyd) shell. There is no frontend build step.
+A self-hosted developer dashboard with two explicit modes:
 
-## Features
+- **Local mode (default):** private localhost dashboard for GitHub repositories, local Git projects, an allowlisted tool launcher, and an embedded ttyd shell.
+- **SaaS foundation (opt-in):** Supabase Auth sign-up/sign-in, server-verified access tokens, an account identity endpoint, and strict disabling of host-local project/terminal APIs.
+
+The SaaS mode is an authentication foundation, **not yet a production cloud IDE**. Isolated cloud workspaces and authenticated local-agent pairing are not implemented. No authenticated SaaS user can use this app to run commands on the server.
+
+## Current features
 
 - Lists cloned Git repositories under PROJECTS_DIR with branch, dirty state, and ahead/behind counts when an upstream exists.
-- Lists repositories visible to your GitHub token. The token is read only by FastAPI and never returned to the browser.
+- Lists repositories visible to a server-side GitHub token in local mode.
 - Embeds ttyd; this project does not implement a terminal emulator.
-- Tool launcher queues allowlisted commands for the ttyd shell. The shell consumes them at its next prompt using a separate server-side queue secret.
-- Write-capable tools (Git fetch and Git pull) require UI confirmation and backend confirmation.
-- Installable PWA with a manifest and service worker. API responses are not cached.
-- Localhost guard on the backend. ttyd must also be started with authentication.
+- Tool launcher queues only predefined commands for the local ttyd shell.
+- Write-capable tools (Git fetch and Git pull) require confirmation in the UI and backend.
+- Installable PWA; API responses are not cached by the service worker.
+- Local mode enforces loopback-only clients. SaaS mode requires explicit host and browser-origin allowlists.
+- Optional Supabase Auth account UI, JWT verification, and /api/me.
 
 ## Requirements
 
-Linux, Python 3.10+, Git, ttyd, curl, and bash. A GitHub personal access token is needed to populate the GitHub repository list; local projects work without it.
+Linux, Python 3.10+, Git, ttyd for local terminal use, and a Supabase project for SaaS authentication.
 
-## Setup
+## Local mode setup
 
 From the repository root:
 
@@ -29,64 +35,103 @@ cp .env.example .env
 openssl rand -hex 32
 ```
 
-Edit .env. Set PROJECTS_DIR to the directory containing your cloned repositories. Set GITHUB_TOKEN to a fine-grained token with Metadata: Read-only access to the repositories you want listed. Set TTYD_USER and TTYD_PASSWORD to non-default credentials. Copy the output from openssl rand -hex 32 into TERMINAL_QUEUE_TOKEN. Keep .env private; it is ignored by Git.
+Edit .env:
 
-## Run the backend
+- Keep APP_MODE=local.
+- Set PROJECTS_DIR to the directory containing your cloned repositories.
+- Set GITHUB_TOKEN to a fine-grained token with Metadata: Read-only access for repositories you want listed.
+- Set TTYD_USER and TTYD_PASSWORD to unique credentials.
+- Copy the output from openssl rand -hex 32 into TERMINAL_QUEUE_TOKEN.
 
-Terminal 1, from the repository root:
+Keep .env private and never commit it. The .env file is ignored by Git.
+
+Start FastAPI on a free loopback port. For example, if port 8000 is already used by another service:
 
 ```bash
 source .venv/bin/activate
 set -a
 source .env
 set +a
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8003
 ```
 
-Open **http://127.0.0.1:8000/**.
+Open http://127.0.0.1:8003/.
 
-## Run ttyd
+### Local terminal
 
-Install ttyd using your Linux distribution's package manager or the upstream installation instructions. Terminal 2, from the repository root:
+Install ttyd using your Linux distribution's package manager or the upstream instructions. In another terminal, from the repository root:
 
 ```bash
+source .venv/bin/activate
 set -a
 source .env
 set +a
+export DEV_TERMINAL_API_URL=http://127.0.0.1:8003
 chmod +x scripts/terminal-shell.sh
 ttyd -W -i 127.0.0.1 -p 7681 -c "${TTYD_USER}:${TTYD_PASSWORD}" ./scripts/terminal-shell.sh
 ```
 
-- -W enables terminal input.
-- -i 127.0.0.1 prevents listening on network interfaces.
-- -c enables ttyd basic authentication.
-- The dashboard embeds http://127.0.0.1:7681. If the embedded view is blocked by browser policy or authentication, use Open separately and sign in.
+Change DEV_TERMINAL_API_URL to the actual local FastAPI port. The -i 127.0.0.1 option prevents ttyd from listening on network interfaces; -c enables basic authentication. Never expose the ttyd port publicly. The terminal runs with the OS user's permissions.
 
-The shell hook polls the backend for commands queued by the tool launcher. It accepts only named tools in the backend allowlist; the shell queue request is authenticated with TERMINAL_QUEUE_TOKEN. Do not add an arbitrary-command endpoint.
+## SaaS authentication foundation
 
-## PWA installation
+This is intentionally opt-in and does not change the default local workflow.
 
-Open the dashboard in Chromium/Chrome or another browser that supports installation. Use the browser's Install app option. The service worker caches static frontend assets only; API responses are fetched live.
+1. Create a Supabase project and enable email/password authentication. Configure the site's URL, allowed redirect URLs, and email confirmation policy in Supabase Auth.
+2. Copy the project's URL and **publishable/anon key** into .env as SUPABASE_URL and SUPABASE_ANON_KEY. Do not use a service-role or secret key.
+3. Configure the exact public hostname and browser origins. For local-only testing, for example:
 
-## Tool launcher
+   ```dotenv
+   APP_MODE=saas
+   SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+   SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_ANON_KEY
+   ALLOWED_HOSTS=127.0.0.1,localhost
+   APP_ORIGINS=http://127.0.0.1:8003,http://localhost:8003
+   ```
 
-Available tools include pwd, file listing, Git status/log/diff, pytest, Ruff, Git fetch, and Git pull. Tools requiring a repository need a local clone selected in the sidebar. Git fetch and Git pull ask for confirmation in the browser and are rejected by the backend unless confirmed=true is supplied.
+   Replace the example Supabase values with your own. For a hosted deployment, use your real hostname and HTTPS origin. ALLOWED_HOSTS contains hostnames without schemes or ports; APP_ORIGINS contains exact origins including scheme and, when needed, port.
 
-Queued commands execute when the ttyd shell reaches its next prompt. If no command runs, make sure both FastAPI and ttyd are running and ttyd was started with scripts/terminal-shell.sh.
+4. Install dependencies and start the app. In SaaS mode, / serves the account page, /api/public-config returns only the public Supabase URL/key, and /api/me verifies the user's access token. Asymmetric ES256/RS256 tokens are checked against Supabase's JWKS and issuer/audience; legacy HS256 tokens are verified by asking Supabase Auth.
+5. Test sign-up, email confirmation (if enabled), sign-in, /api/me, and sign-out.
 
-## Remote access
+### SaaS mode limitations
 
-Remote access is **not enabled by default**. Never port-forward ports 8000 or 7681 from your router and never bind services to 0.0.0.0. If remote access is genuinely needed, use Tailscale only, with restrictive tailnet ACLs and a carefully configured Tailscale Serve/reverse proxy. Keep the local services bound to loopback and keep ttyd authentication enabled. A remote-browser setup must proxy both dashboard and ttyd routes; the default iframe URL is intended for use on the same machine.
+- Local project discovery, GitHub repository listing, tool execution, and the terminal queue return 501 in SaaS mode. They must remain disabled until workspace isolation or authenticated local-agent pairing exists.
+- The SaaS account page does not provision a workspace, store projects, or bill users.
+- There is no production database schema for tenants/workspaces, subscription billing, team membership, agent pairing, or audit events yet.
+- Use HTTPS behind a carefully configured reverse proxy before internet exposure. Set trusted proxy behavior explicitly, enforce TLS, rate-limit authentication endpoints at the edge, and monitor logs.
+- Do not put a Supabase service-role key in this app's .env or browser. Add database access only with user-scoped authorization and Row Level Security policies.
+
+## PWA
+
+Open the local dashboard in a browser that supports installation and use the browser's Install app option. The service worker caches static assets only; API responses are fetched live.
 
 ## API
+
+Local mode:
 
 - GET /api/health
 - GET /api/repos
 - GET /api/projects
 - GET /api/tools
-- POST /api/tools/queue — accepts a predefined tool_id, optional project, and confirmed boolean.
-- GET /api/terminal/next-command — local shell hook only; requires TERMINAL_QUEUE_TOKEN and returns an allowlisted queued command.
+- POST /api/tools/queue
+- GET /api/terminal/next-command — local shell hook only; requires TERMINAL_QUEUE_TOKEN
 
-FastAPI docs/OpenAPI are disabled in this dashboard.
+SaaS mode:
 
-Read [SECURITY.md](SECURITY.md) before using dev-terminal. ttyd grants a real shell with the OS user's permissions.
+- GET /api/health
+- GET /api/public-config — exposes only the public Supabase URL and publishable/anon key
+- GET /api/me — requires Authorization: Bearer <Supabase access token>
+
+FastAPI docs/OpenAPI are disabled.
+
+## Tests
+
+Install development dependencies and run:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Read SECURITY.md before using dev-terminal.
