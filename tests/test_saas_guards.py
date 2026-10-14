@@ -8,7 +8,7 @@ from app import main
 def test_saas_mode_disables_host_local_features(monkeypatch):
     monkeypatch.setattr(main, "APP_MODE", "saas")
     monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
-    client = TestClient(main.app)
+    client = TestClient(main.app, base_url="https://testserver")
 
     response = client.get("/api/projects")
 
@@ -19,7 +19,7 @@ def test_saas_mode_disables_host_local_features(monkeypatch):
 def test_saas_identity_requires_bearer_token(monkeypatch):
     monkeypatch.setattr(main, "APP_MODE", "saas")
     monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
-    client = TestClient(main.app)
+    client = TestClient(main.app, base_url="https://testserver")
 
     response = client.get("/api/me")
 
