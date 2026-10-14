@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0e14">
+  <meta name="description" content="Local-only developer dashboard for cloned Git repositories.">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>dev-terminal</title>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark">›_</span><span>dev-terminal</span></a>
+  <div class="topbar-meta"><span class="local-dot"></span> LOCAL SESSION <span id="health-label" class="muted">checking…</span></div>
+</header>
+<main class="layout">
+  <aside class="sidebar panel">
+    <div class="section-heading"><div><span class="eyebrow">WORKSPACE</span><h1>Repositories</h1></div><button id="refresh-button" class="icon-button" title="Refresh status" aria-label="Refresh">↻</button></div>
+    <label class="search-wrap"><span>⌕</span><input id="repo-filter" type="search" placeholder="Filter repositories…" autocomplete="off"></label>
+    <div class="repo-tabs"><button class="tab active" data-tab="local">Cloned <span id="local-count">0</span></button><button class="tab" data-tab="github">GitHub <span id="github-count">0</span></button></div>
+    <div id="repo-list" class="repo-list"><div class="empty-state">Loading repositories…</div></div>
+    <div class="sidebar-foot"><span class="status-key dirty-key"></span> Modified <span class="status-key clean-key"></span> Clean</div>
+  </aside>
+  <section class="main-column">
+    <section class="panel overview">
+      <div class="overview-copy"><span class="eyebrow">DEVELOPER WORKSPACE</span><h2 id="welcome-title">Select a repository</h2><p id="welcome-copy">Your local workspace, Git status, and tools in one place.</p></div>
+      <div class="overview-stats"><div class="stat"><span>CLONED</span><strong id="stat-cloned">—</strong></div><div class="stat"><span>DIRTY</span><strong id="stat-dirty">—</strong></div><div class="stat"><span>GITHUB</span><strong id="stat-github">—</strong></div></div>
+    </section>
+    <section class="panel tools-panel">
+      <div class="section-heading"><div><span class="eyebrow">QUICK ACTIONS</span><h2>Tool launcher</h2></div><span class="hint">Commands run in ttyd</span></div>
+      <div id="selected-project" class="selected-project">No repository selected</div>
+      <div id="tool-grid" class="tool-grid"><div class="empty-state">Loading tools…</div></div>
+      <p class="inline-note">Read-only tools queue immediately. Git fetch and pull require confirmation. Commands run when the terminal next reaches a prompt.</p>
+    </section>
+    <section class="panel terminal-panel">
+      <div class="terminal-heading"><div><span class="terminal-light"></span><span class="terminal-light yellow"></span><span class="terminal-light green"></span><strong>TERMINAL</strong><span class="terminal-subtitle">ttyd · localhost</span></div><a href="http://127.0.0.1:7681" target="_blank" rel="noopener noreferrer" class="text-link">Open separately ↗</a></div>
+      <div class="terminal-frame"><iframe id="terminal-frame" title="ttyd terminal" src="http://127.0.0.1:7681" loading="lazy"></iframe></div>
+    </section>
+    <footer>LOCAL-FIRST · READ-ONLY BY DEFAULT · <a href="https://github.com/Amir2051/dev-terminal/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">SECURITY</a></footer>
+  </section>
+</main>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
