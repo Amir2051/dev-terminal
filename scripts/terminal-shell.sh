@@ -14,6 +14,7 @@ _dev_terminal_poll_queue() {
     printf '\n\033[2m[dev-terminal tool finished]\033[0m\n'
   fi
 }
+export QUEUE_TOKEN APP_URL
 export -f _dev_terminal_poll_queue
 export PROMPT_COMMAND="_dev_terminal_poll_queue${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 exec bash --noprofile --norc -i
