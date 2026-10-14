@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0e14">
+  <meta name="description" content="Sign in to dev-terminal developer workspaces.">
+  <title>dev-terminal · Account</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0a0e14;--panel:#111925;--line:#263446;--text:#e9f0f8;--muted:#9aabc0;--accent:#78aaff;--danger:#ff9b9b}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top,#14243a 0,var(--bg) 58%);color:var(--text);font:15px/1.55 system-ui,-apple-system,sans-serif;display:grid;place-items:center;padding:24px}
+    main{width:min(100%,440px)}.brand{font:700 21px ui-monospace,monospace;letter-spacing:-.7px;margin-bottom:22px}.brand span{color:var(--accent)}
+    .card{border:1px solid var(--line);background:rgba(17,25,37,.94);border-radius:18px;padding:28px;box-shadow:0 24px 80px #0005}.eyebrow{font:700 11px ui-monospace,monospace;letter-spacing:1.5px;color:var(--accent)}h1{font-size:27px;line-height:1.2;margin:8px 0}p{color:var(--muted);margin:8px 0 20px}
+    label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}input{width:100%;border:1px solid var(--line);background:#0b111a;color:var(--text);border-radius:9px;padding:12px;font:inherit;outline:none}input:focus{border-color:var(--accent)}
+    .switch{display:flex;gap:8px;margin:18px 0}.switch button,button.primary,button.secondary{font:inherit;border-radius:9px;padding:10px 13px;cursor:pointer}.switch button{flex:1;background:transparent;border:1px solid var(--line);color:var(--muted)}.switch button.active{background:#1b2d45;border-color:#42699c;color:var(--text)}
+    button.primary{width:100%;margin-top:18px;background:var(--accent);border:0;color:#08111e;font-weight:700}button.secondary{background:transparent;border:1px solid var(--line);color:var(--text)}button:disabled{opacity:.55;cursor:wait}
+    .message{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;color:var(--muted);overflow-wrap:anywhere}.message.error{border-color:#7c3d47;color:var(--danger)}.hidden{display:none!important}.identity{font-size:13px;overflow-wrap:anywhere}.notice{margin-top:18px;border-left:3px solid #d8a44c;padding:9px 12px;background:#2b2417;color:#e6d5b2;font-size:13px}footer{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}a{color:var(--accent)}
+  </style>
+</head>
+<body>
+<main>
+  <div class="brand"><span>›_</span> dev-terminal</div>
+  <section class="card">
+    <span class="eyebrow">DEVELOPER WORKSPACE</span>
+    <h1 id="title">Your workspace starts here.</h1>
+    <p id="subtitle">Sign in or create an account. Cloud workspaces are not enabled yet.</p>
+    <div id="auth-panel">
+      <div class="switch"><button id="signin-tab" class="active" type="button">Sign in</button><button id="signup-tab" type="button">Create account</button></div>
+      <form id="auth-form">
+        <label for="email">Email</label><input id="email" type="email" autocomplete="email" required maxlength="254">
+        <label for="password">Password</label><input id="password" type="password" autocomplete="current-password" minlength="8" required maxlength="128">
+        <button id="submit" class="primary" type="submit">Sign in</button>
+      </form>
+    </div>
+    <section id="signed-in" class="hidden">
+      <div class="message" id="identity"></div>
+      <div class="notice">Account authentication is active. Workspace provisioning and local-agent pairing are not enabled yet. This page does not expose a host terminal.</div>
+      <button id="signout" class="secondary" type="button" style="margin-top:16px">Sign out</button>
+    </section>
+    <div id="message" class="message hidden" role="status" aria-live="polite"></div>
+    <div class="notice">Security boundary: signing in does not grant access to this server's filesystem or shell. Workspace features remain disabled until isolated execution is implemented.</div>
+  </section>
+  <footer>Never share your password or access token. <a href="https://github.com/Amir2051/dev-terminal/blob/main/SECURITY.md" rel="noopener noreferrer">Security notes</a></footer>
+</main>
+<script type="module" src="/static/saas.js"></script>
+</body>
+</html>
