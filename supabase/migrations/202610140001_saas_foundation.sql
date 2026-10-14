@@ -109,7 +109,7 @@ set search_path = ''
 as $$
 begin
     insert into public.profiles (id, display_name)
-    values (new.id, nullif(new.raw_user_meta_data ->> 'display_name', ''))
+    values (new.id, left(nullif(new.raw_user_meta_data ->> 'display_name', ''), 120))
     on conflict (id) do nothing;
     return new;
 end;
@@ -138,6 +138,9 @@ drop trigger if exists on_workspace_created_add_owner on public.workspaces;
 create trigger on_workspace_created_add_owner
 after insert on public.workspaces
 for each row execute function public.add_workspace_owner_member();
+
+revoke all on function public.handle_new_auth_user() from public, anon, authenticated;
+revoke all on function public.add_workspace_owner_member() from public, anon, authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
@@ -194,6 +197,11 @@ for select to authenticated using (public.is_workspace_member(workspace_id));
 
 create policy "workspace_audit_events_select_member" on public.workspace_audit_events
 for select to authenticated using (public.is_workspace_member(workspace_id));
+
+-- Explicitly remove any broad default grants, then grant only required client operations.
+revoke all on table public.profiles, public.workspaces, public.workspace_members,
+    public.workspace_agents, public.workspace_subscriptions, public.workspace_audit_events
+from anon, authenticated;
 
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update, delete on public.workspaces to authenticated;
