@@ -63,3 +63,47 @@ def test_saas_responses_include_security_headers_and_are_not_cached(monkeypatch)
     assert response.headers["cache-control"] == "no-store"
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert "https://project.example.supabase.co" in response.headers["content-security-policy"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/api/repos", None),
+        ("GET", "/api/projects", None),
+        ("GET", "/api/tools", None),
+        ("POST", "/api/tools/queue", {"tool_id": "pwd"}),
+        ("GET", "/api/terminal/next-command", None),
+    ],
+)
+def test_saas_mode_disables_every_host_execution_route(monkeypatch, method, path, payload):
+    monkeypatch.setattr(main, "APP_MODE", "saas")
+    monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
+    client = TestClient(main.app, base_url="https://testserver")
+
+    response = client.request(method, path, json=payload)
+
+    assert response.status_code == 501
+    assert "disabled in SaaS mode" in response.json()["detail"]
+
+
+def test_saas_mode_rejects_unapproved_browser_origins(monkeypatch):
+    monkeypatch.setattr(main, "APP_MODE", "saas")
+    monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
+    monkeypatch.setattr(main, "APP_ORIGINS", {"https://app.example.com"})
+    client = TestClient(main.app, base_url="https://testserver")
+
+    response = client.get("/api/health", headers={"origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert response.text == "Unexpected Origin"
+
+
+def test_saas_mode_rejects_unknown_hosts(monkeypatch):
+    monkeypatch.setattr(main, "APP_MODE", "saas")
+    monkeypatch.setattr(main, "ALLOWED_HOSTS", {"app.example.com"})
+    client = TestClient(main.app, base_url="https://unknown.example.com")
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 403
+    assert response.text == "Unexpected Host header"
