@@ -201,7 +201,7 @@ for select to authenticated using (public.is_workspace_member(workspace_id));
 -- Explicitly remove any broad default grants, then grant only required client operations.
 revoke all on table public.profiles, public.workspaces, public.workspace_members,
     public.workspace_agents, public.workspace_subscriptions, public.workspace_audit_events
-from anon, authenticated;
+from public, anon, authenticated;
 
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update, delete on public.workspaces to authenticated;
