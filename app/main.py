@@ -92,6 +92,8 @@ async def local_only_guard(request: Request, call_next):
         return PlainTextResponse("SaaS mode requires ALLOWED_HOSTS configuration", status_code=503)
     if not host_name or host_name not in ALLOWED_HOSTS:
         return PlainTextResponse("Unexpected Host header", status_code=403)
+    if host_name not in {"localhost", "127.0.0.1", "::1"} and request.url.scheme != "https":
+        return PlainTextResponse("HTTPS is required for non-local SaaS hosts", status_code=400)
     origin = request.headers.get("origin")
     if origin:
         normalized_origin = origin.rstrip("/")
