@@ -96,7 +96,7 @@ This is intentionally opt-in and does not change the default local workflow.
 
 ### SaaS database schema (scaffold only)
 
-The SaaS schema is tracked in `supabase/migrations/20261014155254_dev_terminal_saas_foundation.sql`, with subsequent hardening in `20261014160423_harden_private_workspace_helpers.sql` and `20261014160507_index_workspace_foreign_keys.sql`. It defines profiles, workspaces, workspace membership/roles, local-agent metadata, subscription metadata, and audit events with row-level security. The foundation and hardening migrations have been applied to the dedicated dev-terminal Supabase project. The workspace helper functions live in the non-exposed `private` schema; Supabase's security advisor returned no findings after this change.
+The SaaS schema is tracked in `supabase/migrations/20261014155254_dev_terminal_saas_foundation.sql`, with subsequent hardening in `20261014160423_harden_private_workspace_helpers.sql`  `20261014160507_index_workspace_foreign_keys.sql`, and `20261014160631_tighten_workspace_owner_and_billing_access.sql`. It defines profiles, workspaces, workspace membership/roles, local-agent metadata, subscription metadata, and audit events with row-level security. The foundation and hardening migrations have been applied to the dedicated dev-terminal Supabase project. The workspace helper functions live in the non-exposed `private` schema; Supabase's security advisor returned no findings after this change.
 
 The database schema is still a scaffold and **is not wired to workspace-provisioning or billing routes**. Keep dev-terminal on its own Supabase project; do not apply these migrations to SafeNestT or another product's production database. Test migrations and RLS changes before release.
 
@@ -104,7 +104,7 @@ The database schema is still a scaffold and **is not wired to workspace-provisio
 
 - Local project discovery, GitHub repository listing, tool execution, and the terminal queue return 501 in SaaS mode. They must remain disabled until workspace isolation or authenticated local-agent pairing exists.
 - The SaaS account page does not provision a workspace, store projects, or bill users.
-- There is no production database schema for tenants/workspaces, subscription billing, team membership, agent pairing, or audit events yet.
+- The database schema scaffold exists, but application routes for workspace provisioning, team membership management, billing, agent pairing, and audit persistence are not implemented.
 - Use HTTPS behind a carefully configured reverse proxy before internet exposure. Set trusted proxy behavior explicitly, enforce TLS, rate-limit authentication endpoints at the edge, and monitor logs.
 - Do not put a Supabase service-role key in this app's .env or browser. Add database access only with user-scoped authorization and Row Level Security policies.
 
