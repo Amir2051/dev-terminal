@@ -1,0 +1,12 @@
+{
+  "id": "/",
+  "name": "dev-terminal",
+  "short_name": "dev-terminal",
+  "description": "A local-first developer dashboard for cloned Git repositories.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "icons": [{"src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}
