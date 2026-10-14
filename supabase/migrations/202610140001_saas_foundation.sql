@@ -146,7 +146,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = ''
-as $
+as $$
 declare
     canonical_owner uuid;
 begin
@@ -166,7 +166,7 @@ begin
 
     return new;
 end;
-$;
+$$;
 
 drop trigger if exists guard_workspace_owner_membership on public.workspace_members;
 create trigger guard_workspace_owner_membership
@@ -177,14 +177,14 @@ create or replace function public.prevent_workspace_owner_change()
 returns trigger
 language plpgsql
 set search_path = ''
-as $
+as $$
 begin
     if new.owner_id is distinct from old.owner_id then
         raise exception 'Workspace owner transfers require a dedicated transfer workflow.';
     end if;
     return new;
 end;
-$;
+$$;
 
 drop trigger if exists prevent_workspace_owner_change on public.workspaces;
 create trigger prevent_workspace_owner_change
