@@ -23,7 +23,7 @@ SaaS mode is an early authentication scaffold, **not an authorization-complete o
 4. Host-local project listing, GitHub repository listing, tool queueing, and terminal command polling are disabled in SaaS mode. Do not re-enable them until the feature uses authenticated, tenant-scoped local-agent pairing or isolated cloud workspaces.
 5. Do not expose a host shell to SaaS customers. Every cloud workspace must run in an isolated environment with CPU, memory, disk, process, network, and execution-time limits; use per-workspace identities and enforce authorization server-side.
 6. Before launching publicly, add request rate limits, abuse controls, security headers, structured audit events, secret rotation procedures, backups, alerting, and an incident response process.
-7. Before storing workspace or billing data, add a persistent data model with explicit tenant/user ownership and enforce Row Level Security policies on every user-accessible table. Never rely on frontend filtering as authorization.
+7. A workspace/billing schema scaffold now exists in the dedicated dev-terminal Supabase project, and RLS is enabled on its tables. The schema is not yet wired to application routes. Before exposing workspace APIs, add adversarial tests proving users cannot read or mutate another workspace, review every policy and grant, and keep billing/agent/audit writes server-managed. Never rely on frontend filtering as authorization.
 8. Account creation is not a paid subscription, and sign-in alone does not provision a workspace. Billing, workspace provisioning, local-agent pairing, team roles, and audit persistence are not implemented yet.
 
 ## Known limitations
