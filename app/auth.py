@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from urllib.parse import urlparse
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import jwt
@@ -24,8 +24,8 @@ def _settings() -> tuple[str, str]:
         parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
     ):
         raise HTTPException(status_code=503, detail="SUPABASE_URL must use HTTPS outside localhost.")
-    if parsed.scheme not in {"https", "http"}:
-        raise HTTPException(status_code=503, detail="SUPABASE_URL must be an HTTP(S) URL.")
+    if parsed.scheme not in {"https", "http"} or parsed.query or parsed.fragment:
+        raise HTTPException(status_code=503, detail="SUPABASE_URL must be a clean HTTP(S) base URL.")
     return base_url, anon_key
 
 
@@ -45,6 +45,9 @@ def verify_access_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid access token.") from None
 
     algorithm = header.get("alg")
+    if algorithm not in {"ES256", "RS256", "HS256"}:
+        raise HTTPException(status_code=401, detail="Unsupported access token algorithm.")
+
     try:
         base_url, anon_key = _settings()
         issuer = f"{base_url}/auth/v1"
@@ -62,34 +65,35 @@ def verify_access_token(token: str) -> dict[str, Any]:
             )
             if not isinstance(claims.get("sub"), str) or not claims["sub"]:
                 raise HTTPException(status_code=401, detail="Invalid access token subject.")
+            if claims.get("role") != "authenticated":
+                raise HTTPException(status_code=401, detail="Token is not a user access token.")
             return claims
 
-        if algorithm == "HS256":
-            # Legacy Supabase JWT secrets are symmetric. Do not keep that secret here;
-            # ask Supabase Auth to validate these tokens instead.
-            response = httpx.get(
-                f"{issuer}/user",
-                headers={"apikey": anon_key, "Authorization": f"Bearer {token}"},
-                timeout=5.0,
-            )
-            if response.status_code != 200:
-                raise HTTPException(status_code=401, detail="Invalid or expired access token.")
-            user = response.json()
-            user_id = user.get("id")
-            if not isinstance(user_id, str) or not user_id:
-                raise HTTPException(status_code=401, detail="Invalid access token subject.")
-            return {
-                "sub": user_id,
-                "email": user.get("email"),
-                "role": "authenticated",
-                "iss": issuer,
-                "aud": "authenticated",
-            }
-
-        raise HTTPException(status_code=401, detail="Unsupported access token algorithm.")
+        # Legacy Supabase JWT secrets are symmetric. Do not keep that secret here;
+        # ask Supabase Auth to validate these tokens instead.
+        response = httpx.get(
+            f"{issuer}/user",
+            headers={"apikey": anon_key, "Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid or expired access token.")
+        user = response.json()
+        user_id = user.get("id")
+        if not isinstance(user_id, str) or not user_id:
+            raise HTTPException(status_code=401, detail="Invalid access token subject.")
+        return {
+            "sub": user_id,
+            "email": user.get("email"),
+            "role": "authenticated",
+            "iss": issuer,
+            "aud": "authenticated",
+        }
     except HTTPException:
         raise
     except jwt.PyJWKClientConnectionError:
         raise HTTPException(status_code=503, detail="Could not reach the Supabase signing-key endpoint.") from None
-    except (jwt.PyJWTError, httpx.HTTPError, ValueError, KeyError):
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Could not reach Supabase Auth.") from None
+    except (jwt.PyJWTError, ValueError, KeyError):
         raise HTTPException(status_code=401, detail="Invalid or expired access token.") from None
