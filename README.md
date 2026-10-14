@@ -94,6 +94,12 @@ This is intentionally opt-in and does not change the default local workflow.
 4. Install dependencies and start the app. In SaaS mode, / serves the account page, /api/public-config returns only the public Supabase URL/key, and /api/me verifies the user's access token. Asymmetric ES256/RS256 tokens are checked against Supabase's JWKS and issuer/audience; legacy HS256 tokens are verified by asking Supabase Auth.
 5. Test sign-up, email confirmation (if enabled), sign-in, /api/me, and sign-out.
 
+### SaaS database schema (scaffold only)
+
+A starter migration is included at `supabase/migrations/202610140001_saas_foundation.sql`. It defines profiles, workspaces, workspace membership/roles, local-agent metadata, subscription metadata, and audit events with row-level security. Agent registration, billing writes, and audit writes are intentionally reserved for trusted server-side workflows.
+
+This migration is **not connected to the FastAPI routes and has not been applied to a live database**. Use a dedicated Supabase project for dev-terminal; do not apply it to another product's production database. Review and test the migration in a disposable Supabase project before applying it anywhere important.
+
 ### SaaS mode limitations
 
 - Local project discovery, GitHub repository listing, tool execution, and the terminal queue return 501 in SaaS mode. They must remain disabled until workspace isolation or authenticated local-agent pairing exists.
