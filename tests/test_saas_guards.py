@@ -27,6 +27,17 @@ def test_saas_identity_requires_bearer_token(monkeypatch):
     assert "Bearer access token required" in response.json()["detail"]
 
 
+def test_saas_requires_https_for_nonlocal_hosts(monkeypatch):
+    monkeypatch.setattr(main, "APP_MODE", "saas")
+    monkeypatch.setattr(main, "ALLOWED_HOSTS", {"dev-terminal.example.com"})
+    client = TestClient(main.app)
+
+    response = client.get("/", headers={"host": "dev-terminal.example.com"})
+
+    assert response.status_code == 400
+    assert "HTTPS is required" in response.text
+
+
 def test_local_mode_guard_rejects_saas_execution(monkeypatch):
     monkeypatch.setattr(main, "APP_MODE", "saas")
 
