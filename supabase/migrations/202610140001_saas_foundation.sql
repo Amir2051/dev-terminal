@@ -139,6 +139,40 @@ create trigger on_workspace_created_add_owner
 after insert on public.workspaces
 for each row execute function public.add_workspace_owner_member();
 
+-- Keep the owner role bound to workspaces.owner_id. Owners cannot demote or
+-- replace the canonical owner membership through ordinary membership edits.
+create or replace function public.guard_workspace_owner_membership()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+    canonical_owner uuid;
+begin
+    select w.owner_id into canonical_owner
+    from public.workspaces w
+    where w.id = new.workspace_id;
+
+    if new.role = 'owner' and new.user_id is distinct from canonical_owner then
+        raise exception 'Only the canonical workspace owner may have the owner role.';
+    end if;
+
+    if tg_op = 'UPDATE'
+       and old.user_id = canonical_owner
+       and (new.user_id is distinct from old.user_id or new.role <> 'owner') then
+        raise exception 'The canonical workspace owner membership cannot be changed directly.';
+    end if;
+
+    return new;
+end;
+$;
+
+drop trigger if exists guard_workspace_owner_membership on public.workspace_members;
+create trigger guard_workspace_owner_membership
+before insert or update on public.workspace_members
+for each row execute function public.guard_workspace_owner_membership();
+
 create or replace function public.prevent_workspace_owner_change()
 returns trigger
 language plpgsql
@@ -160,6 +194,7 @@ for each row execute function public.prevent_workspace_owner_change();
 revoke all on function public.handle_new_auth_user() from public, anon, authenticated;
 revoke all on function public.add_workspace_owner_member() from public, anon, authenticated;
 revoke all on function public.prevent_workspace_owner_change() from public, anon, authenticated;
+revoke all on function public.guard_workspace_owner_membership() from public, anon, authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
@@ -203,9 +238,12 @@ with check (public.has_workspace_role(workspace_id, array['owner']));
 create policy "workspace_members_delete_admin" on public.workspace_members
 for delete to authenticated
 using (
-    public.has_workspace_role(workspace_id, array['owner'])
-    or (role = 'member' and public.has_workspace_role(workspace_id, array['admin']))
-    or (user_id = (select auth.uid()) and role <> 'owner')
+    user_id <> (select w.owner_id from public.workspaces w where w.id = workspace_members.workspace_id)
+    and (
+        public.has_workspace_role(workspace_id, array['owner'])
+        or (role = 'member' and public.has_workspace_role(workspace_id, array['admin']))
+        or (user_id = (select auth.uid()) and role <> 'owner')
+    )
 );
 
 create policy "workspace_agents_select_member" on public.workspace_agents
