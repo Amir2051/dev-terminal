@@ -102,6 +102,34 @@ async def local_only_guard(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+
+    if request.url.path.startswith("/api/") or (APP_MODE == "saas" and request.url.path == "/"):
+        response.headers["Cache-Control"] = "no-store"
+
+    if APP_MODE == "saas":
+        supabase_host = urlparse(SUPABASE_URL).hostname
+        connect_sources = ["'self'", "https://esm.sh"]
+        if supabase_host:
+            connect_sources.extend([f"https://{supabase_host}", f"wss://{supabase_host}"])
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' https://esm.sh; "
+            "style-src 'self' 'unsafe-inline'; "
+            f"connect-src {' '.join(connect_sources)}; "
+            "img-src 'self' data:; object-src 'none'; base-uri 'self'; "
+            "form-action 'self'; frame-ancestors 'none'",
+        )
+    return response
+
+
 def _require_local_mode() -> None:
     if APP_MODE != "local":
         raise HTTPException(
