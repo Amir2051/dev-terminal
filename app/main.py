@@ -14,14 +14,24 @@ from urllib.parse import urlparse
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.auth import verify_access_token
+
 load_dotenv()
+APP_MODE = os.getenv("APP_MODE", "local").strip().lower()
+if APP_MODE not in {"local", "saas"}:
+    raise RuntimeError("APP_MODE must be either 'local' or 'saas'.")
+
 PROJECTS_DIR = Path(os.path.expandvars(os.path.expanduser(os.getenv("PROJECTS_DIR", "~/Projects")))).resolve()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
 TERMINAL_QUEUE_TOKEN = os.getenv("TERMINAL_QUEUE_TOKEN", "").strip()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "").strip()
+ALLOWED_HOSTS = {item.strip().lower() for item in os.getenv("ALLOWED_HOSTS", "").split(",") if item.strip()}
+APP_ORIGINS = {item.strip().rstrip("/") for item in os.getenv("APP_ORIGINS", "").split(",") if item.strip()}
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 TOOLS: dict[str, dict[str, Any]] = {
@@ -52,20 +62,50 @@ def _loopback(host: str | None) -> bool:
     return host in {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
+def _host_name(value: str) -> str:
+    try:
+        return (urlparse("//" + value).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 @app.middleware("http")
 async def local_only_guard(request: Request, call_next):
-    client_host = request.client.host if request.client else None
-    if not _loopback(client_host):
-        return PlainTextResponse("Localhost access only", status_code=403)
-    host_header = request.headers.get("host", "").split(":", 1)[0].strip("[]").lower()
-    if host_header and host_header not in {"127.0.0.1", "localhost", "::1"}:
+    host_header = request.headers.get("host", "")
+    host_name = _host_name(host_header)
+
+    if APP_MODE == "local":
+        client_host = request.client.host if request.client else None
+        if not _loopback(client_host):
+            return PlainTextResponse("Localhost access only", status_code=403)
+        if host_name and host_name not in {"127.0.0.1", "localhost", "::1"}:
+            return PlainTextResponse("Unexpected Host header", status_code=403)
+        origin = request.headers.get("origin")
+        if origin:
+            parsed = urlparse(origin)
+            if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+                return PlainTextResponse("Unexpected Origin", status_code=403)
+        return await call_next(request)
+
+    # SaaS mode is opt-in. Configure an explicit host and browser-origin allowlist.
+    if not ALLOWED_HOSTS:
+        return PlainTextResponse("SaaS mode requires ALLOWED_HOSTS configuration", status_code=503)
+    if not host_name or host_name not in ALLOWED_HOSTS:
         return PlainTextResponse("Unexpected Host header", status_code=403)
     origin = request.headers.get("origin")
     if origin:
-        parsed = urlparse(origin)
-        if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+        normalized_origin = origin.rstrip("/")
+        if not APP_ORIGINS or normalized_origin not in APP_ORIGINS:
             return PlainTextResponse("Unexpected Origin", status_code=403)
     return await call_next(request)
+
+
+def _require_local_mode() -> None:
+    if APP_MODE != "local":
+        raise HTTPException(
+            status_code=501,
+            detail="This endpoint accesses the server's local environment and is disabled in SaaS mode until authenticated local-agent pairing or isolated cloud workspaces are implemented.",
+        )
 
 
 def _project_path(name: str) -> Path:
@@ -166,11 +206,44 @@ async def _github_repos() -> list[dict[str, Any]]:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "localhost_only": True, "projects_dir": str(PROJECTS_DIR)}
+    result = {"status": "ok", "mode": APP_MODE, "localhost_only": APP_MODE == "local"}
+    if APP_MODE == "local":
+        result["projects_dir"] = str(PROJECTS_DIR)
+    else:
+        result["auth_configured"] = bool(SUPABASE_URL and SUPABASE_ANON_KEY)
+        result["host_allowlist_configured"] = bool(ALLOWED_HOSTS)
+    return result
+
+
+@app.get("/api/public-config")
+async def public_config():
+    if APP_MODE != "saas":
+        raise HTTPException(status_code=404, detail="Not found")
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(status_code=503, detail="Configure SUPABASE_URL and SUPABASE_ANON_KEY on the server.")
+    return {"supabase_url": SUPABASE_URL, "supabase_anon_key": SUPABASE_ANON_KEY}
+
+
+@app.get("/api/me")
+async def current_user(request: Request):
+    if APP_MODE != "saas":
+        return {"authenticated": False, "mode": "local"}
+    authorization = request.headers.get("authorization", "")
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Bearer access token required.")
+    claims = verify_access_token(token.strip())
+    return {
+        "authenticated": True,
+        "id": claims["sub"],
+        "email": claims.get("email"),
+        "role": claims.get("role", "authenticated"),
+    }
 
 
 @app.get("/api/repos")
 async def list_github_repos():
+    _require_local_mode()
     try:
         return {"configured": bool(GITHUB_TOKEN and GITHUB_TOKEN != "github_pat_replace_me"), "repos": await _github_repos()}
     except httpx.HTTPError as exc:
@@ -179,11 +252,13 @@ async def list_github_repos():
 
 @app.get("/api/projects")
 async def list_local_projects():
+    _require_local_mode()
     return {"projects_dir": str(PROJECTS_DIR), "projects": await asyncio.to_thread(_list_projects)}
 
 
 @app.get("/api/tools")
 async def list_tools():
+    _require_local_mode()
     return {"tools": [
         {"id": key, "label": value["label"], "description": value["description"], "write": value["write"], "needs_project": value["needs_project"]}
         for key, value in TOOLS.items()
@@ -192,6 +267,7 @@ async def list_tools():
 
 @app.post("/api/tools/queue")
 async def queue_tool(body: QueueToolRequest):
+    _require_local_mode()
     tool = TOOLS.get(body.tool_id)
     if not tool:
         raise HTTPException(status_code=404, detail="Unknown tool")
@@ -212,6 +288,7 @@ async def queue_tool(body: QueueToolRequest):
 
 @app.get("/api/terminal/next-command")
 async def next_terminal_command(request: Request):
+    _require_local_mode()
     if not TERMINAL_QUEUE_TOKEN:
         raise HTTPException(status_code=503, detail="Set TERMINAL_QUEUE_TOKEN in .env")
     supplied = request.headers.get("x-terminal-queue-token", "")
@@ -226,6 +303,8 @@ async def next_terminal_command(request: Request):
 
 @app.get("/", include_in_schema=False)
 async def index():
+    if APP_MODE == "saas":
+        return FileResponse(STATIC_DIR / "saas.html")
     return FileResponse(STATIC_DIR / "index.html")
 
 
