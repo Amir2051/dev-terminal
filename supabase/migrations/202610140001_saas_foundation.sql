@@ -139,8 +139,27 @@ create trigger on_workspace_created_add_owner
 after insert on public.workspaces
 for each row execute function public.add_workspace_owner_member();
 
+create or replace function public.prevent_workspace_owner_change()
+returns trigger
+language plpgsql
+set search_path = ''
+as $
+begin
+    if new.owner_id is distinct from old.owner_id then
+        raise exception 'Workspace owner transfers require a dedicated transfer workflow.';
+    end if;
+    return new;
+end;
+$;
+
+drop trigger if exists prevent_workspace_owner_change on public.workspaces;
+create trigger prevent_workspace_owner_change
+before update of owner_id on public.workspaces
+for each row execute function public.prevent_workspace_owner_change();
+
 revoke all on function public.handle_new_auth_user() from public, anon, authenticated;
 revoke all on function public.add_workspace_owner_member() from public, anon, authenticated;
+revoke all on function public.prevent_workspace_owner_change() from public, anon, authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
