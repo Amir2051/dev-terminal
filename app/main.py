@@ -140,7 +140,8 @@ async def _github_repos() -> list[dict[str, Any]]:
     }
     repos = []
     async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
-        for page in range(1, 11):
+        page = 1
+        while True:
             response = await client.get(
                 "https://api.github.com/user/repos",
                 params={"per_page": 100, "page": page, "sort": "updated", "affiliation": "owner,collaborator,organization_member"},
@@ -159,6 +160,7 @@ async def _github_repos() -> list[dict[str, Any]]:
             } for item in batch)
             if len(batch) < 100:
                 break
+            page += 1
     return repos
 
 
