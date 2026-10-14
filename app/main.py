@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import shlex
 import subprocess
 import threading
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 load_dotenv()
 PROJECTS_DIR = Path(os.path.expandvars(os.path.expanduser(os.getenv("PROJECTS_DIR", "~/Projects")))).resolve()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+TERMINAL_QUEUE_TOKEN = os.getenv("TERMINAL_QUEUE_TOKEN", "").strip()
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 TOOLS: dict[str, dict[str, Any]] = {
@@ -208,6 +210,11 @@ async def queue_tool(body: QueueToolRequest):
 
 @app.get("/api/terminal/next-command")
 async def next_terminal_command(request: Request):
+    if not TERMINAL_QUEUE_TOKEN:
+        raise HTTPException(status_code=503, detail="Set TERMINAL_QUEUE_TOKEN in .env")
+    supplied = request.headers.get("x-terminal-queue-token", "")
+    if not secrets.compare_digest(supplied, TERMINAL_QUEUE_TOKEN):
+        raise HTTPException(status_code=403, detail="Invalid terminal queue token")
     if request.headers.get("origin"):
         raise HTTPException(status_code=403, detail="Shell polling endpoint only")
     with _queue_lock:
