@@ -7,12 +7,12 @@
   <meta name="description" content="Local-only developer dashboard for cloned Git repositories.">
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css">
-  <title>dev-terminal</title>
+  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <title>Dev Terminal · RZ Agent</title>
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/"><span class="brand-mark">›_</span><span>dev-terminal</span></a>
+  <a class="brand" href="/"><span class="brand-mark">›_</span><span>Dev Terminal</span></a>
   <div class="topbar-meta"><span class="local-dot"></span> LOCAL SESSION <span id="health-label" class="muted">checking…</span></div>
 </header>
 <main class="layout">
@@ -34,6 +34,34 @@
       <div id="tool-grid" class="tool-grid"><div class="empty-state">Loading tools…</div></div>
       <p class="inline-note">Read-only tools queue immediately. Git fetch and pull require confirmation. Commands run when the terminal next reaches a prompt.</p>
     </section>
+    <section class="panel ai-panel">
+      <div class="section-heading"><div><span class="eyebrow">LOCAL AGENT · NO API BILL</span><h2>RZ Agent</h2></div><span id="ai-status" class="hint">Checking Ollama…</span></div>
+      <p class="inline-note">RZ Agent runs locally through Ollama and can inspect code, filenames, safe files, Git diffs/history, and explicitly allowlisted read-only MCP tools. File edits require your approval. Warning: repository tests can execute arbitrary code under your OS account; do not run them on untrusted repositories until sandbox isolation is configured.</p>
+      <form id="ai-form" class="ai-form">
+        <div class="section-heading"><h3>Agent tools</h3><span class="hint">Read-only · bounded</span></div>
+      <div class="ai-tool-row"><button id="ai-tool-map" class="ai-secondary" type="button" disabled>Project map</button><button id="ai-tool-status" class="ai-secondary" type="button" disabled>Git status</button><button id="ai-tool-commits" class="ai-secondary" type="button" disabled>Recent commits</button></div>
+      <div class="ai-tool-row"><input id="ai-search-query" type="search" maxlength="120" placeholder="Search source code…" aria-label="Search source code" disabled><button id="ai-tool-search" class="ai-secondary" type="button" disabled>Search code</button></div>
+      <div id="ai-tool-output-wrap" class="ai-tool-output-wrap" hidden><div class="section-heading"><h3 id="ai-tool-output-title">Tool output</h3><button id="ai-use-tool-output" class="ai-secondary" type="button">Give results to RZ Agent</button></div><pre id="ai-tool-output" class="ai-tool-output"></pre></div>
+      <label for="ai-prompt" class="ai-label">Ask RZ Agent</label>
+        <textarea id="ai-prompt" rows="3" maxlength="4000" placeholder="Review a bug, explain code, plan a feature, or analyze the tool results…" required></textarea>
+        <div class="ai-actions"><span id="ai-model" class="hint">Model: checking…</span><button id="ai-send" class="ai-send" type="submit">Ask RZ Agent ↗</button></div>
+      </form>
+      <div id="ai-answer" class="ai-answer" aria-live="polite">Select a repository to give the assistant basic project context.</div>
+      <div class="ai-workbench">
+        <div class="section-heading"><div><span class="eyebrow">SOURCE ACCESS</span><h3>Read a project file</h3></div><span id="ai-file-status" class="hint">Select a repository first</span></div>
+        <div class="ai-file-controls"><select id="ai-file-select" aria-label="Repository file" disabled><option value="">Loading file list…</option></select><button id="ai-refresh-files" type="button" class="ai-secondary" disabled>Refresh files</button><button id="ai-load-file" type="button" class="ai-secondary" disabled>Read file</button></div>
+        <textarea id="ai-file-content" class="ai-code" rows="9" readonly placeholder="Choose a repository file to inspect its contents safely."></textarea>
+        <label for="ai-edit-instructions" class="ai-label">Describe the change you want</label>
+        <textarea id="ai-edit-instructions" rows="2" maxlength="2000" placeholder="Example: Add input validation and a test for blank names…" disabled></textarea>
+        <div class="ai-actions"><span class="hint">One existing text file · max 24 KiB for edits</span><button id="ai-propose-edit" type="button" class="ai-send" disabled>Generate diff</button></div>
+        <div id="ai-diff-wrap" hidden>
+          <div class="section-heading"><h3>Review proposed diff</h3><span id="ai-diff-meta" class="hint"></span></div>
+          <pre id="ai-diff" class="ai-diff"></pre>
+          <p class="inline-note">Review every change. Applying writes this one file immediately. The proposal expires after 15 minutes and is rejected if the original file changes.</p>
+          <button id="ai-apply-edit" type="button" class="ai-apply" disabled>Approve and apply this file change</button>
+        </div>
+      </div>
+    </section>
     <section class="panel terminal-panel">
       <div class="terminal-heading"><div><span class="terminal-light"></span><span class="terminal-light yellow"></span><span class="terminal-light green"></span><strong>TERMINAL</strong><span class="terminal-subtitle">ttyd · localhost</span></div><a href="http://127.0.0.1:7681" target="_blank" rel="noopener noreferrer" class="text-link">Open separately ↗</a></div>
       <div class="terminal-frame"><iframe id="terminal-frame" title="ttyd terminal" src="http://127.0.0.1:7681" loading="lazy"></iframe></div>
@@ -42,6 +70,6 @@
   </section>
 </main>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<script src="/static/app.js" defer></script>
+<script src="/static/app.js?v=2" defer></script>
 </body>
 </html>
