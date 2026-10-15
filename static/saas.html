@@ -14,7 +14,7 @@
     label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}input{width:100%;border:1px solid var(--line);background:#0b111a;color:var(--text);border-radius:9px;padding:12px;font:inherit;outline:none}input:focus{border-color:var(--accent)}
     .switch{display:flex;gap:8px;margin:18px 0}.switch button,button.primary,button.secondary{font:inherit;border-radius:9px;padding:10px 13px;cursor:pointer}.switch button{flex:1;background:transparent;border:1px solid var(--line);color:var(--muted)}.switch button.active{background:#1b2d45;border-color:#42699c;color:var(--text)}
     button.primary{width:100%;margin-top:18px;background:var(--accent);border:0;color:#08111e;font-weight:700}button.secondary{background:transparent;border:1px solid var(--line);color:var(--text)}button:disabled{opacity:.55;cursor:wait}
-    .message{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;color:var(--muted);overflow-wrap:anywhere}.message.error{border-color:#7c3d47;color:var(--danger)}.hidden{display:none!important}.identity{font-size:13px;overflow-wrap:anywhere}.notice{margin-top:18px;border-left:3px solid #d8a44c;padding:9px 12px;background:#2b2417;color:#e6d5b2;font-size:13px}footer{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}a{color:var(--accent)}
+    .message{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;color:var(--muted);overflow-wrap:anywhere}.message.error{border-color:#7c3d47;color:var(--danger)}.hidden{display:none!important}.identity{font-size:13px;overflow-wrap:anywhere}.notice{margin-top:18px;border-left:3px solid #d8a44c;padding:9px 12px;background:#2b2417;color:#e6d5b2;font-size:13px}.workspace{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}.workspace h2{font-size:16px;margin:0 0 8px}.workspace-list{display:grid;gap:8px;margin-top:12px}.workspace-item{padding:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere}.workspace-item strong{display:block}.workspace-item small{color:var(--muted)}.workspace-form{display:flex;gap:8px;margin-top:12px}.workspace-form input{min-width:0;flex:1}.workspace-form button{white-space:nowrap}footer{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}a{color:var(--accent)}
   </style>
 </head>
 <body>
@@ -34,11 +34,20 @@
     </div>
     <section id="signed-in" class="hidden">
       <div class="message" id="identity"></div>
-      <div class="notice">Account authentication is active. Workspace provisioning and local-agent pairing are not enabled yet. This page does not expose a host terminal.</div>
+      <section class="workspace" aria-labelledby="workspace-heading">
+        <h2 id="workspace-heading">Your workspaces</h2>
+        <p>Workspace records are scoped to your signed-in account. Paired computers can run only fixed, allowlisted tools in explicitly approved project folders. Sensitive tools require your approval.</p>
+        <div id="workspace-list" class="workspace-list" aria-live="polite"></div>
+        <form id="workspace-form" class="workspace-form">
+          <input id="workspace-name" type="text" maxlength="120" minlength="1" placeholder="New workspace name" aria-label="New workspace name" required>
+          <button id="workspace-create" class="secondary" type="submit">Create</button>
+        </form>
+      </section>
+      <div class="notice">Security boundary: pairing does not grant an unrestricted shell. Remote tools are restricted to a fixed allowlist and approved project folders; pytest, Git fetch, and Git pull require owner/admin approval.</div>
       <button id="signout" class="secondary" type="button" style="margin-top:16px">Sign out</button>
     </section>
     <div id="message" class="message hidden" role="status" aria-live="polite"></div>
-    <div class="notice">Security boundary: signing in does not grant access to this server's filesystem or shell. Workspace features remain disabled until isolated execution is implemented.</div>
+    <div class="notice">Security boundary: signing in never grants unrestricted access to this server's filesystem or shell. Local-agent pairing uses a separate, revocable credential. The paired computer executes only locally allowlisted tools; production-grade OS/container isolation is not yet implemented.</div>
   </section>
   <footer>Never share your password or access token. <a href="https://github.com/Amir2051/dev-terminal/blob/main/SECURITY.md" rel="noopener noreferrer">Security notes</a></footer>
 </main>

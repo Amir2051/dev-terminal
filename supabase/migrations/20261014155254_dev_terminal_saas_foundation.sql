@@ -1,6 +1,7 @@
 -- dev-terminal SaaS foundation.
--- This schema is not yet wired into the FastAPI application. All user-facing tables
--- enable RLS; billing, audit writes, and agent provisioning are server-managed only.
+-- Workspace metadata is exposed through user-JWT-scoped FastAPI routes. All user-facing
+-- tables enable RLS; billing and agent provisioning are not implemented. Workspace lifecycle
+-- audit events are added by a later migration.
 
 create table if not exists public.profiles (
     id uuid primary key references auth.users(id) on delete cascade,
@@ -212,7 +213,8 @@ for update to authenticated using (id = (select auth.uid()))
 with check (id = (select auth.uid()));
 
 create policy "workspaces_select_member" on public.workspaces
-for select to authenticated using (public.is_workspace_member(id));
+for select to authenticated
+using (owner_id = (select auth.uid()) or public.is_workspace_member(id));
 create policy "workspaces_insert_owner" on public.workspaces
 for insert to authenticated with check (owner_id = (select auth.uid()));
 create policy "workspaces_update_admin" on public.workspaces

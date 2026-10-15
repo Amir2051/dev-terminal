@@ -20,7 +20,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Upgrade pip to patched release
+        run: python -m pip install --upgrade "pip>=26.2"
       - name: Install dependencies
         run: python -m pip install -r requirements-dev.txt
       - name: Run tests
         run: python -m pytest -q
+      - name: Audit Python dependencies
+        run: python -m pip_audit

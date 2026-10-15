@@ -1,4 +1,4 @@
-const CACHE = "dev-terminal-static-v1";
+const CACHE = "dev-terminal-static-v2";
 const ASSETS = ["/", "/static/styles.css", "/static/app.js", "/static/manifest.webmanifest", "/static/icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
