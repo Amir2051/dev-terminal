@@ -63,6 +63,7 @@ def main() -> int:
         origins = f"http://127.0.0.1:{port},http://localhost:{port}"
     env.update(
         APP_MODE="saas",
+        DEV_TERMINAL_ALLOW_LOCAL_RATE_LIMIT="1",
         SUPABASE_URL=api_url,
         SUPABASE_ANON_KEY=anon_key,
         ALLOWED_HOSTS=env.get("ALLOWED_HOSTS", "127.0.0.1,localhost"),

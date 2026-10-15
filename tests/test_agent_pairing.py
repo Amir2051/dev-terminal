@@ -1,6 +1,8 @@
+import asyncio
 import hashlib
 from pathlib import Path
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import main
@@ -11,6 +13,13 @@ def setup_saas(monkeypatch):
     monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
     monkeypatch.setattr(main, "SUPABASE_URL", "https://project.example")
     monkeypatch.setattr(main, "SUPABASE_ANON_KEY", "public-test-key")
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_URL", "https://redis.example")
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_TOKEN", "redis-test-token")
+
+    async def test_shared_limiter(client_host, now_epoch):
+        return main._allow_pairing_attempt(client_host, float(now_epoch))
+
+    monkeypatch.setattr(main, "_allow_pairing_attempt_shared", test_shared_limiter)
     return TestClient(main.app, base_url="https://testserver")
 
 
@@ -81,6 +90,80 @@ def test_pairing_redemption_throttles_repeated_attempts(monkeypatch):
         assert response.status_code == 401
     limited = client.post("/api/agents/redeem", json={"pairing_code": "bad-pairing-code-value-long-enough"})
     assert limited.status_code == 429
+
+
+def test_pairing_throttle_bounds_tracked_clients_and_cleans_expired_entries(monkeypatch):
+    from collections import deque
+
+    monkeypatch.setattr(main, "_pairing_attempts", {
+        "old-a": deque([0.0]),
+        "old-b": deque([0.0]),
+    })
+    monkeypatch.setattr(main, "_PAIRING_MAX_TRACKED_CLIENTS", 2)
+    monkeypatch.setattr(main, "_pairing_last_cleanup", 0.0)
+
+    assert main._allow_pairing_attempt("new-client", 30.0) is False
+    assert main._allow_pairing_attempt("new-client", 61.0) is True
+    assert set(main._pairing_attempts) == {"new-client"}
+
+
+def test_shared_pairing_limiter_uses_atomic_redis_counter_and_hides_client_ip(monkeypatch):
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_URL", "https://redis.example")
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_TOKEN", "secret-test-token")
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"result": 1}]
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["timeout"] = kwargs["timeout"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            captured.update(url=url, **kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeClient)
+    assert asyncio.run(main._allow_pairing_attempt_shared("192.0.2.17", 120)) is True
+    assert captured["url"] == "https://redis.example/pipeline"
+    assert captured["headers"]["Authorization"] == "Bearer secret-test-token"
+    command = captured["json"][0]
+    assert command[0] == "EVAL"
+    assert "192.0.2.17" not in command[3]
+    assert "ZREMRANGEBYSCORE" in command[1]
+    assert command[4:7] == ["120000", "60000", "10"]
+    assert len(command[7]) == 24
+
+
+def test_shared_pairing_limiter_fails_closed_when_not_configured(monkeypatch):
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_URL", "")
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_TOKEN", "")
+    try:
+        asyncio.run(main._allow_pairing_attempt_shared("127.0.0.1", 120))
+    except HTTPException as exc:
+        assert exc.status_code == 503
+    else:
+        raise AssertionError("Shared pairing limiter must fail closed when not configured")
+
+
+def test_saas_pairing_fails_closed_without_shared_limiter(monkeypatch):
+    client = setup_saas(monkeypatch)
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_URL", "")
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_TOKEN", "")
+    monkeypatch.delenv("DEV_TERMINAL_ALLOW_LOCAL_RATE_LIMIT", raising=False)
+    response = client.post("/api/agents/redeem", json={"pairing_code": "bad-pairing-code-value-long-enough"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Shared pairing rate limiting is not configured."
 
 
 def test_agent_heartbeat_requires_valid_credential(monkeypatch):

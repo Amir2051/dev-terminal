@@ -344,6 +344,7 @@ async function showSignedIn(session) {
     $("identity").textContent = "Signed in as " + (data.email || data.id || "authenticated user");
     $("auth-panel").classList.add("hidden");
     $("signed-in").classList.remove("hidden");
+    $("auth-security-note").classList.add("hidden");
     $("title").textContent = "You're signed in.";
     $("subtitle").textContent = "Your account identity has been verified.";
     clearMessage();
@@ -358,6 +359,9 @@ function showSignedOut() {
   activeSession = null;
   $("auth-panel").classList.remove("hidden");
   $("signed-in").classList.add("hidden");
+  $("auth-security-note").classList.remove("hidden");
+  $("title").textContent = "Your workspace starts here.";
+  $("subtitle").textContent = "Sign in or create an account to manage your workspaces and paired development computers.";
   setMode(mode);
 }
 $("signin-tab").addEventListener("click", () => setMode("signin"));

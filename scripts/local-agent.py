@@ -18,12 +18,16 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 CONFIG_PATH = Path.home() / ".config" / "dev-terminal" / "agent.json"
 POLL_SECONDS = 10
 MAX_OUTPUT_CHARS = 12_000
+# Do not inherit user-writable PATH entries when dispatching agent tools.
+SAFE_EXECUTABLE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 # The argument vectors are local constants, not received from the server.
 READ_ONLY_TOOLS: dict[str, tuple[str, ...]] = {
@@ -158,25 +162,32 @@ def project_directory(project_name: str) -> Path:
     return resolved
 
 
+def _system_executable(name: str) -> str:
+    """Resolve a tool only from the fixed system PATH, never the caller's PATH."""
+    executable = shutil.which(name, path=SAFE_EXECUTABLE_PATH)
+    if executable is None:
+        raise RuntimeError(f"Required system executable is unavailable: {name}.")
+    resolved = Path(executable).resolve(strict=True)
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise RuntimeError(f"Resolved executable is not runnable: {name}.")
+    return str(resolved)
+
+
 def tool_argv(tool_id: str, cwd: Path) -> list[str]:
     if tool_id not in ALL_TOOLS:
         raise RuntimeError("Unknown tool ID; refusing execution.")
     args = list(ALL_TOOLS[tool_id])
     if tool_id == "pytest":
-        # Run pytest as a module so Python includes the repository root on sys.path.
-        # This avoids collection failures such as "No module named app" when invoking
-        # the virtualenv's pytest console script directly.
+        # pytest executes repository-defined code and is approval-gated. Prefer the
+        # project's Python environment, otherwise use the interpreter running agent.
         local_python = cwd / ".venv" / "bin" / "python"
-        if local_python.is_file():
+        if local_python.is_file() and os.access(local_python, os.X_OK):
+            # Preserve the venv path (often a symlink) so Python discovers pyvenv.cfg.
             return [str(local_python), "-m", "pytest", "-q"]
-        if shutil.which("pytest") is None:
-            return [sys.executable, "-m", "pytest", "-q"]
-    if tool_id == "ruff":
-        local_bin = cwd / ".venv" / "bin" / "ruff"
-        if local_bin.is_file():
-            args[0] = str(local_bin)
-        elif shutil.which("ruff") is None:
-            raise RuntimeError("Ruff is not installed in this environment.")
+        return [sys.executable, "-m", "pytest", "-q"]
+    # Every executable, including Ruff, must come from the fixed system PATH.
+    # Never run project-local virtualenv tools: the project may control those files.
+    args[0] = _system_executable(args[0])
     return args
 
 
@@ -184,15 +195,31 @@ def execute_command(command: dict[str, Any]) -> tuple[str, str]:
     command_id = command.get("id")
     tool_id = command.get("tool_id")
     project_name = command.get("project_name")
-    if not isinstance(command_id, str) or len(command_id) != 36:
-        raise RuntimeError("Malformed command ID; refusing execution.")
+    if not isinstance(command_id, str):
+        raise TypeError("Malformed command ID; refusing execution.")
+    try:
+        if str(uuid.UUID(command_id)) != command_id.lower():
+            raise ValueError
+    except (ValueError, AttributeError):
+        raise RuntimeError("Malformed command ID; refusing execution.") from None
     if not isinstance(tool_id, str) or tool_id not in ALL_TOOLS:
         raise RuntimeError("Server requested a tool outside the local allowlist.")
     if tool_id in APPROVAL_REQUIRED_TOOLS:
-        # Defense in depth: mutating tools need a persisted approval marker as well
-        # as being in the local fixed-argv allowlist.
-        if not command.get("approved_by") or not command.get("approved_at"):
-            raise RuntimeError("Mutating tool has no verifiable approval marker; refusing execution.")
+        # Defense in depth: require a real user identity and timezone-aware approval
+        # timestamp. The database additionally only returns approved commands as queued.
+        approved_by = command.get("approved_by")
+        approved_at = command.get("approved_at")
+        try:
+            if not isinstance(approved_by, str):
+                raise TypeError
+            uuid.UUID(approved_by)
+            if not isinstance(approved_at, str):
+                raise TypeError
+            parsed_approval = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+            if parsed_approval.tzinfo is None:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            raise RuntimeError("Mutating tool has no valid approval identity/timestamp; refusing execution.") from None
         print(f"Executing approved mutating tool {tool_id}.", flush=True)
     if tool_id == "pwd":
         cwd = Path.home()
@@ -204,10 +231,11 @@ def execute_command(command: dict[str, Any]) -> tuple[str, str]:
     try:
         runner_env = {
             key: os.environ[key]
-            for key in ("HOME", "PATH", "LANG", "LC_ALL", "TZ", "VIRTUAL_ENV")
+            for key in ("HOME", "LANG", "LC_ALL", "TZ", "VIRTUAL_ENV")
             if key in os.environ
         }
         runner_env.update({
+            "PATH": SAFE_EXECUTABLE_PATH,
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_OPTIONAL_LOCKS": "0",
             "PYTHONNOUSERSITE": "1",
@@ -270,8 +298,16 @@ def run() -> int:
                     print(f"Tool {command.get('tool_id')} finished: {outcome}.", flush=True)
                 else:
                     print("Server did not confirm command completion.", file=sys.stderr, flush=True)
-        except RuntimeError as exc:
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {exc}", file=sys.stderr, flush=True)
+        except Exception as exc:  # noqa: BLE001 - keep the long-running agent alive on unexpected cycle errors
+            # A malformed response or unexpected transport/runtime error should not
+            # silently terminate a paired agent. Keep diagnostics bounded and avoid
+            # printing request bodies or credentials.
+            message = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+            print(
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Agent cycle failed: {message[:240]}",
+                file=sys.stderr,
+                flush=True,
+            )
         time.sleep(POLL_SECONDS)
 
 

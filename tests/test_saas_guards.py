@@ -1,3 +1,4 @@
+import asyncio
 from collections import deque
 
 import pytest
@@ -50,6 +51,7 @@ def test_local_mode_guard_rejects_saas_execution(monkeypatch):
 
 
 def test_saas_responses_include_security_headers_and_are_not_cached(monkeypatch):
+    monkeypatch.setattr(main, "_shared_pairing_limiter_reachable", lambda: asyncio.sleep(0, result=True))
     monkeypatch.setattr(main, "APP_MODE", "saas")
     monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
     monkeypatch.setattr(main, "SUPABASE_URL", "https://project.example.supabase.co")
@@ -68,7 +70,26 @@ def test_saas_responses_include_security_headers_and_are_not_cached(monkeypatch)
     assert "http://project.example.supabase.co" not in response.headers["content-security-policy"]
 
 
+def test_health_separates_rate_limit_configuration_from_live_reachability(monkeypatch):
+    async def unreachable():
+        return False
+
+    monkeypatch.setattr(main, "APP_MODE", "saas")
+    monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_URL", "https://redis.example")
+    monkeypatch.setattr(main, "PAIRING_RATE_LIMIT_REST_TOKEN", "test-token")
+    monkeypatch.setattr(main, "_shared_pairing_limiter_reachable", unreachable)
+    client = TestClient(main.app, base_url="https://testserver")
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["pairing_rate_limit_configured"] is True
+    assert response.json()["pairing_rate_limit_shared"] is False
+
+
 def test_saas_csp_allows_http_only_for_loopback_supabase(monkeypatch):
+    monkeypatch.setattr(main, "_shared_pairing_limiter_reachable", lambda: asyncio.sleep(0, result=False))
     monkeypatch.setattr(main, "APP_MODE", "saas")
     monkeypatch.setattr(main, "ALLOWED_HOSTS", {"testserver"})
     monkeypatch.setattr(main, "SUPABASE_URL", "http://127.0.0.1:55321")

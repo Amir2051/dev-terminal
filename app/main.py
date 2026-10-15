@@ -25,7 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.auth import verify_access_token
-from app.mcp_tools import call_tool as call_mcp_tool, discover_tools as discover_mcp_tools
+from app.mcp_tools import call_tool as call_mcp_tool
+from app.mcp_tools import discover_tools as discover_mcp_tools
 
 load_dotenv()
 APP_MODE = os.getenv("APP_MODE", "local").strip().lower()
@@ -38,6 +39,14 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
 TERMINAL_QUEUE_TOKEN = os.getenv("TERMINAL_QUEUE_TOKEN", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "").strip()
+# Optional shared Redis REST endpoint for cross-worker pairing throttling.
+# Accept Upstash's standard variable names as well as the app-specific aliases.
+PAIRING_RATE_LIMIT_REST_URL = (
+    os.getenv("PAIRING_RATE_LIMIT_REST_URL") or os.getenv("UPSTASH_REDIS_REST_URL", "")
+).strip().rstrip("/")
+PAIRING_RATE_LIMIT_REST_TOKEN = (
+    os.getenv("PAIRING_RATE_LIMIT_REST_TOKEN") or os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+).strip()
 ALLOWED_HOSTS = {item.strip().lower() for item in os.getenv("ALLOWED_HOSTS", "").split(",") if item.strip()}
 APP_ORIGINS = {item.strip().rstrip("/") for item in os.getenv("APP_ORIGINS", "").split(",") if item.strip()}
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -128,9 +137,100 @@ class AgentCommandCompleteRequest(BaseModel):
     output: str = Field(default="", max_length=20000)
 
 
+_PAIRING_WINDOW_SECONDS = 60.0
+_PAIRING_MAX_ATTEMPTS = 10
+_PAIRING_MAX_TRACKED_CLIENTS = 10_000
 _pairing_attempts: dict[str, deque[float]] = {}
-
 _pairing_attempts_lock = threading.Lock()
+_pairing_last_cleanup = 0.0
+
+
+def _allow_pairing_attempt(client_host: str, now: float) -> bool:
+    """Bound local fallback memory; do not trust forwarded IP headers."""
+    global _pairing_last_cleanup
+    with _pairing_attempts_lock:
+        attempts = _pairing_attempts.get(client_host)
+        if attempts is not None:
+            while attempts and now - attempts[0] > _PAIRING_WINDOW_SECONDS:
+                attempts.popleft()
+            if not attempts:
+                _pairing_attempts.pop(client_host, None)
+                attempts = None
+
+        if attempts is None:
+            if len(_pairing_attempts) >= _PAIRING_MAX_TRACKED_CLIENTS:
+                if now - _pairing_last_cleanup >= _PAIRING_WINDOW_SECONDS:
+                    for host, recent in list(_pairing_attempts.items()):
+                        while recent and now - recent[0] > _PAIRING_WINDOW_SECONDS:
+                            recent.popleft()
+                        if not recent:
+                            _pairing_attempts.pop(host, None)
+                    _pairing_last_cleanup = now
+                if len(_pairing_attempts) >= _PAIRING_MAX_TRACKED_CLIENTS:
+                    return False
+            attempts = deque()
+            _pairing_attempts[client_host] = attempts
+
+        if len(attempts) >= _PAIRING_MAX_ATTEMPTS:
+            return False
+        attempts.append(now)
+        return True
+
+
+async def _shared_pairing_limiter_reachable() -> bool:
+    """Check that configured Redis credentials can reach the shared limiter."""
+    if not PAIRING_RATE_LIMIT_REST_URL or not PAIRING_RATE_LIMIT_REST_TOKEN:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.post(
+                f"{PAIRING_RATE_LIMIT_REST_URL}/pipeline",
+                headers={"Authorization": f"Bearer {PAIRING_RATE_LIMIT_REST_TOKEN}", "Content-Type": "application/json"},
+                json=[["PING"]],
+            )
+            response.raise_for_status()
+            data = response.json()
+            return (
+                isinstance(data, list)
+                and bool(data)
+                and isinstance(data[0], dict)
+                and data[0].get("result") == "PONG"
+            )
+    except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
+        return False
+
+
+async def _allow_pairing_attempt_shared(client_host: str, now_epoch: int) -> bool:
+    """Use an atomic, rolling-window Upstash Redis limit; fail closed on errors."""
+    if not PAIRING_RATE_LIMIT_REST_URL or not PAIRING_RATE_LIMIT_REST_TOKEN:
+        raise HTTPException(status_code=503, detail="Shared pairing rate limiting is not configured.")
+    client_hash = hashlib.sha256(client_host.encode("utf-8", errors="replace")).hexdigest()
+    key = f"dev-terminal:pairing:{client_hash}"
+    window_ms = int(_PAIRING_WINDOW_SECONDS * 1000)
+    script = (
+        "local now = tonumber(ARGV[1]); local window = tonumber(ARGV[2]); local limit = tonumber(ARGV[3]); "
+        "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - window); "
+        "local count = redis.call('ZCARD', KEYS[1]); "
+        "if count >= limit then return count + 1; end; "
+        "redis.call('ZADD', KEYS[1], now, ARGV[4]); "
+        "redis.call('PEXPIRE', KEYS[1], window); "
+        "return count + 1"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.post(
+                f"{PAIRING_RATE_LIMIT_REST_URL}/pipeline",
+                headers={"Authorization": f"Bearer {PAIRING_RATE_LIMIT_REST_TOKEN}", "Content-Type": "application/json"},
+                json=[["EVAL", script, "1", key, str(now_epoch * 1000), str(window_ms), str(_PAIRING_MAX_ATTEMPTS), secrets.token_hex(12)]],
+            )
+            response.raise_for_status()
+            data = response.json()
+            count = data[0].get("result") if isinstance(data, list) and data and isinstance(data[0], dict) else None
+            if not isinstance(count, int):
+                raise TypeError("invalid Redis rate-limit response")
+    except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
+        raise HTTPException(status_code=503, detail="Shared pairing rate limiter is temporarily unavailable.") from None
+    return count <= _PAIRING_MAX_ATTEMPTS
 
 
 app = FastAPI(title="dev-terminal", docs_url=None, redoc_url=None, openapi_url=None)
@@ -330,6 +430,8 @@ async def health():
     else:
         result["auth_configured"] = bool(SUPABASE_URL and SUPABASE_ANON_KEY)
         result["host_allowlist_configured"] = bool(ALLOWED_HOSTS)
+        result["pairing_rate_limit_configured"] = bool(PAIRING_RATE_LIMIT_REST_URL and PAIRING_RATE_LIMIT_REST_TOKEN)
+        result["pairing_rate_limit_shared"] = await _shared_pairing_limiter_reachable()
     return result
 
 
@@ -510,16 +612,17 @@ async def create_agent_pairing(body: AgentPairingRequest, request: Request):
 async def redeem_agent_pairing(body: AgentRedeemRequest, request: Request):
     if APP_MODE != "saas":
         raise HTTPException(status_code=404, detail="Not found")
-    # Basic per-client throttle. Deployments should also enforce rate limits at the edge.
     client_host = request.client.host if request.client else "unknown"
-    now = asyncio.get_running_loop().time()
-    with _pairing_attempts_lock:
-        attempts = _pairing_attempts.setdefault(client_host, deque())
-        while attempts and now - attempts[0] > 60:
-            attempts.popleft()
-        if len(attempts) >= 10:
-            raise HTTPException(status_code=429, detail="Too many pairing attempts. Wait one minute and try again.")
-        attempts.append(now)
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    if PAIRING_RATE_LIMIT_REST_URL and PAIRING_RATE_LIMIT_REST_TOKEN:
+        allowed = await _allow_pairing_attempt_shared(client_host, now_epoch)
+    elif os.getenv("DEV_TERMINAL_ALLOW_LOCAL_RATE_LIMIT") == "1":
+        # Explicitly enabled only by the isolated local-Supabase runner and tests.
+        allowed = _allow_pairing_attempt(client_host, asyncio.get_running_loop().time())
+    else:
+        raise HTTPException(status_code=503, detail="Shared pairing rate limiting is not configured.")
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Too many pairing attempts. Wait one minute and try again.")
     code = body.pairing_code.strip()
     credential = secrets.token_urlsafe(32)
     try:
@@ -916,7 +1019,7 @@ async def local_ai_chat(body: LocalAIChatRequest):
                                     output = await _execute_agent_tool(name, args, body.project)
                             except HTTPException as exc:
                                 output = f"Tool failed with HTTP {exc.status_code}: {exc.detail}"
-                            except Exception as exc:
+                            except Exception as exc:  # noqa: BLE001 - tool failures must be returned as bounded text
                                 output = f"Tool failed safely: {exc.__class__.__name__}"
                             tool_result_cache[cache_key] = output
                     tools_used.append({"tool": label, "summary": output[:600]})

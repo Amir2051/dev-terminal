@@ -150,7 +150,7 @@ def test_local_runner_rejects_arbitrary_tool_id_without_subprocess(monkeypatch):
 
 def test_local_runner_rejects_mutating_tool_without_approval_marker(monkeypatch):
     monkeypatch.setattr(local_agent.subprocess, "run", lambda *args, **kwargs: pytest.fail("must not run"))
-    with pytest.raises(RuntimeError, match="no verifiable approval marker"):
+    with pytest.raises(RuntimeError, match="valid approval identity/timestamp"):
         local_agent.execute_command({
             "id": "00000000-0000-4000-8000-000000000001",
             "tool_id": "git-pull",
@@ -158,11 +158,57 @@ def test_local_runner_rejects_mutating_tool_without_approval_marker(monkeypatch)
         })
 
 
+@pytest.mark.parametrize("field,value", [
+    ("approved_by", "not-a-user-uuid"),
+    ("approved_at", "yesterday"),
+    ("approved_at", "2026-10-15T12:00:00"),
+])
+def test_local_runner_rejects_malformed_approval_markers(monkeypatch, field, value):
+    monkeypatch.setattr(local_agent.subprocess, "run", lambda *args, **kwargs: pytest.fail("must not run"))
+    command = {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "tool_id": "git-pull",
+        "project_name": "demo",
+        "approved_by": "00000000-0000-4000-8000-000000000099",
+        "approved_at": "2026-10-15T12:00:00+00:00",
+    }
+    command[field] = value
+    with pytest.raises(RuntimeError, match="valid approval identity/timestamp"):
+        local_agent.execute_command(command)
+
+
+def test_local_runner_resolves_tools_outside_inherited_path(monkeypatch, tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text("#!/bin/sh\\necho untrusted\\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+    resolved = local_agent.tool_argv("git-status", tmp_path)
+    assert Path(resolved[0]).is_absolute()
+    assert Path(resolved[0]) != fake_git
+    assert Path(resolved[0]).name == "git"
+
+
+def test_ruff_never_executes_project_local_virtualenv_binary(monkeypatch, tmp_path):
+    local_ruff = tmp_path / ".venv" / "bin" / "ruff"
+    local_ruff.parent.mkdir(parents=True)
+    local_ruff.write_text("#!/bin/sh\necho untrusted\n", encoding="utf-8")
+    local_ruff.chmod(0o755)
+    monkeypatch.setattr(local_agent, "_system_executable", lambda name: "/usr/bin/ruff")
+
+    resolved = local_agent.tool_argv("ruff", tmp_path)
+
+    assert resolved == ["/usr/bin/ruff", "check", "."]
+    assert resolved[0] != str(local_ruff)
+
+
 def test_pytest_uses_project_virtualenv_python_as_module(tmp_path):
     repo = tmp_path / "demo"
     python = repo / ".venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.touch()
+    python.chmod(0o755)
     assert local_agent.tool_argv("pytest", repo) == [str(python), "-m", "pytest", "-q"]
 
 
@@ -192,7 +238,10 @@ def test_local_runner_uses_fixed_argv_and_shell_false(monkeypatch, tmp_path):
     })
     assert outcome == "succeeded"
     assert output == "branch main"
-    assert captured["argv"] == ["git", "status", "--short", "--branch"]
+    assert Path(captured["argv"][0]).name == "git"
+    assert Path(captured["argv"][0]).is_absolute()
+    assert captured["argv"][1:] == ["status", "--short", "--branch"]
+    assert captured["env"]["PATH"] == local_agent.SAFE_EXECUTABLE_PATH
     assert captured["shell"] is False
     assert captured["cwd"] == str(repo)
 
@@ -221,7 +270,7 @@ def test_saas_command_history_and_approval_routes_reject_unauthenticated_request
 
 def test_local_runner_requires_approval_for_pytest(monkeypatch):
     monkeypatch.setattr(local_agent.subprocess, "run", lambda *args, **kwargs: pytest.fail("must not run"))
-    with pytest.raises(RuntimeError, match="no verifiable approval marker"):
+    with pytest.raises(RuntimeError, match="valid approval identity/timestamp"):
         local_agent.execute_command({
             "id": "00000000-0000-4000-8000-000000000001",
             "tool_id": "pytest",
